@@ -97,20 +97,12 @@ This prints `[propext, Classical.choice, Quot.sound]`.
 
 Mathlib is pinned to commit
 [`76e9e72`](https://github.com/Shamrock-Frost/mathlib4/commit/76e9e72564e982c2424e0d218a34f96bfc712bbc)
-of a fork: Mathlib master of 3 September 2026 with nine pull requests by other contributors
-merged in, all open at the time. Seven are on depth and Cohen–Macaulay rings
-([#26214](https://github.com/leanprover-community/mathlib4/pull/26214), since merged,
-[#26216](https://github.com/leanprover-community/mathlib4/pull/26216),
-[#26217](https://github.com/leanprover-community/mathlib4/pull/26217),
-[#26218](https://github.com/leanprover-community/mathlib4/pull/26218),
-[#26245](https://github.com/leanprover-community/mathlib4/pull/26245),
-[#26957](https://github.com/leanprover-community/mathlib4/pull/26957),
-[#28599](https://github.com/leanprover-community/mathlib4/pull/28599)), one is on Krull
-dimension under integral extensions
-([#41904](https://github.com/leanprover-community/mathlib4/pull/41904)), and one on Noether
-normalization ([#42835](https://github.com/leanprover-community/mathlib4/pull/42835)). This
-project uses them for the formula `ht J + dim R/J = n^2`, for the step from height to
-regularity, and in the dimension theory of affine varieties.
+of a fork: Mathlib master of 3 September 2026 plus nine pull requests by other contributors
+that were open at the time, on depth and Cohen–Macaulay rings, on Krull dimension under
+integral extensions, and on Noether normalization. The fork's
+[merge commits](https://github.com/Shamrock-Frost/mathlib4/commits/76e9e72564e982c2424e0d218a34f96bfc712bbc)
+name them. This project uses them for the formula `ht J + dim R/J = n^2`, for the step from
+height to regularity, and in the dimension theory of affine varieties.
 
 ## Layout
 
