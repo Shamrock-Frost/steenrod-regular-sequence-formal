@@ -1,0 +1,1156 @@
+import Height.Geometry.Group
+import Mathlib.Data.Matrix.Mul
+
+/-!
+# The pair model of `GL_n` as a `GroupPresentation`
+
+`GL_n` is not closed in `𝔸(n²)`, so it is presented by *pairs*: the closed subscheme of
+`𝔸(2n²)` cut out by `g h = 1` and `h g = 1`, with `h` the inverse of `g`.  The group law is
+`(g, h) (g', h') = (g g', h' h)`, the inverse is the swap `(g, h) ↦ (h, g)` and the unit is
+`(1, 1)`.
+
+This is the consumers' first group (`Chain/Untwist`'s `glPair`), and the test that the
+interface of `Geometry/Group.lean` is usable: the descent conditions come from
+`GroupData.mul_mem_of_mem_sup` plus matrix identities, and the five Hopf axioms are checked
+on the entries of the two variable matrices (`pairAeval_ext`, this file's instance of
+`Geometry/Group.lean`'s `quotAlgHom_ext`) — never on `K`-points, so no geometric
+reducedness is needed.
+
+Everything is stated through `pairAeval`: an algebra map out of `K[GLIdx n]` is a *pair of
+matrices* over the target, and two such maps are equal exactly when the two pairs are
+(`pairAeval_ext`).  Each axiom is then two matrix identities.
+-/
+
+open MvPolynomial TensorProduct AlgebraicGeometry CategoryTheory
+
+-- Triple tensor products of the coordinate ring need one more level of pending synthesis
+-- than the default (as in `Geometry/Group.lean`).
+set_option maxSynthPendingDepth 4
+
+namespace Height.Geometry
+
+/-- The coordinates of the pair model of `GL_n`: two `n × n` blocks. -/
+abbrev GLIdx (n : ℕ) : Type := (Fin n × Fin n) ⊕ (Fin n × Fin n)
+
+namespace GLPair
+
+variable (K : Type) [Field K] (n : ℕ)
+
+/-- The algebra map out of `K[GLIdx n]` given by a pair of matrices. -/
+noncomputable def pairAeval {B : Type} [CommRing B] [Algebra K B]
+    (M N : Matrix (Fin n) (Fin n) B) : MvPolynomial (GLIdx n) K →ₐ[K] B :=
+  aeval (Sum.elim (fun c => M c.1 c.2) (fun c => N c.1 c.2))
+
+variable {K n}
+
+@[simp] theorem pairAeval_X_inl {B : Type} [CommRing B] [Algebra K B]
+    (M N : Matrix (Fin n) (Fin n) B) (c : Fin n × Fin n) :
+    pairAeval K n M N (X (Sum.inl c)) = M c.1 c.2 := by simp [pairAeval]
+
+@[simp] theorem pairAeval_X_inr {B : Type} [CommRing B] [Algebra K B]
+    (M N : Matrix (Fin n) (Fin n) B) (c : Fin n × Fin n) :
+    pairAeval K n M N (X (Sum.inr c)) = N c.1 c.2 := by simp [pairAeval]
+
+variable (K n)
+
+/-- The first block of variables, as a matrix. -/
+noncomputable def gVar : Matrix (Fin n) (Fin n) (MvPolynomial (GLIdx n) K) :=
+  Matrix.of fun i j => X (Sum.inl (i, j))
+
+/-- The second block of variables, as a matrix. -/
+noncomputable def hVar : Matrix (Fin n) (Fin n) (MvPolynomial (GLIdx n) K) :=
+  Matrix.of fun i j => X (Sum.inr (i, j))
+
+variable {K n}
+
+@[simp] theorem gVar_apply (i j : Fin n) : gVar K n i j = X (Sum.inl (i, j)) := rfl
+@[simp] theorem hVar_apply (i j : Fin n) : hVar K n i j = X (Sum.inr (i, j)) := rfl
+
+/-- The two blocks of variables, mapped by an algebra map, recover the pair. -/
+@[simp] theorem map_gVar {B : Type} [CommRing B] [Algebra K B]
+    (M N : Matrix (Fin n) (Fin n) B) : (gVar K n).map (pairAeval K n M N) = M := by
+  ext i j; simp
+
+@[simp] theorem map_hVar {B : Type} [CommRing B] [Algebra K B]
+    (M N : Matrix (Fin n) (Fin n) B) : (hVar K n).map (pairAeval K n M N) = N := by
+  ext i j; simp
+
+/-- **An algebra map out of `K[GLIdx n]` is a pair of matrices**: two are equal exactly when
+they agree on the two blocks of variables. -/
+theorem pairAeval_ext {B : Type} [CommRing B] [Algebra K B]
+    {φ ψ : MvPolynomial (GLIdx n) K →ₐ[K] B}
+    (hg : (gVar K n).map φ = (gVar K n).map ψ) (hh : (hVar K n).map φ = (hVar K n).map ψ) :
+    φ = ψ := by
+  refine MvPolynomial.algHom_ext fun c => ?_
+  cases c with
+  | inl c => exact congrFun (congrFun hg c.1) c.2
+  | inr c => exact congrFun (congrFun hh c.1) c.2
+
+/-- Every algebra map out of `K[GLIdx n]` is a `pairAeval`. -/
+theorem eq_pairAeval {B : Type} [CommRing B] [Algebra K B]
+    (φ : MvPolynomial (GLIdx n) K →ₐ[K] B) :
+    φ = pairAeval K n ((gVar K n).map φ) ((hVar K n).map φ) :=
+  pairAeval_ext (by rw [map_gVar]) (by rw [map_hVar])
+
+/-- Composing a `pairAeval` with an algebra map maps the pair. -/
+theorem comp_pairAeval {B C : Type} [CommRing B] [Algebra K B] [CommRing C] [Algebra K C]
+    (M N : Matrix (Fin n) (Fin n) B) (φ : B →ₐ[K] C) :
+    φ.comp (pairAeval K n M N) = pairAeval K n (M.map φ) (N.map φ) :=
+  pairAeval_ext (by ext i j; simp) (by ext i j; simp)
+
+/-! ### The ideal and the group data -/
+
+variable (K n)
+
+/-- The ideal `(g h − 1, h g − 1)` of the pair model. -/
+noncomputable def glIdeal : Ideal (MvPolynomial (GLIdx n) K) :=
+  Ideal.span ({p | ∃ i j, p = (gVar K n * hVar K n - 1) i j} ∪
+    {p | ∃ i j, p = (hVar K n * gVar K n - 1) i j})
+
+variable {K n}
+
+theorem gh_sub_one_mem (i j : Fin n) : (gVar K n * hVar K n - 1) i j ∈ glIdeal K n :=
+  Ideal.subset_span (Or.inl ⟨i, j, rfl⟩)
+
+theorem hg_sub_one_mem (i j : Fin n) : (hVar K n * gVar K n - 1) i j ∈ glIdeal K n :=
+  Ideal.subset_span (Or.inr ⟨i, j, rfl⟩)
+
+/-- The ideal is generated by the two matrix relations, so containment is tested on them. -/
+theorem glIdeal_le {J : Ideal (MvPolynomial (GLIdx n) K)}
+    (hg : ∀ i j, (gVar K n * hVar K n - 1) i j ∈ J)
+    (hh : ∀ i j, (hVar K n * gVar K n - 1) i j ∈ J) : glIdeal K n ≤ J := by
+  refine Ideal.span_le.mpr ?_
+  rintro p (⟨i, j, rfl⟩ | ⟨i, j, rfl⟩)
+  · exact hg i j
+  · exact hh i j
+
+/-- An algebra map sends the relation `g h − 1` to the same relation on the image pair. -/
+theorem map_rel {B : Type} [CommRing B] [Algebra K B]
+    (φ : MvPolynomial (GLIdx n) K →ₐ[K] B)
+    (M N : Matrix (Fin n) (Fin n) (MvPolynomial (GLIdx n) K)) (i j : Fin n) :
+    φ ((M * N - 1) i j) = (M.map φ * N.map φ - 1) i j := by
+  simp [Matrix.sub_apply, Matrix.mul_apply, Matrix.one_apply, apply_ite φ]
+
+/-- An ideal swallows a matrix product with an entrywise member. -/
+theorem entry_mul_mem {R : Type} [CommRing R] {J : Ideal R}
+    {M : Matrix (Fin n) (Fin n) R} (hM : ∀ i j, M i j ∈ J)
+    (P Q : Matrix (Fin n) (Fin n) R) (i j : Fin n) : (P * M * Q) i j ∈ J := by
+  rw [Matrix.mul_apply]
+  refine Ideal.sum_mem _ fun k _ => Ideal.mul_mem_right _ _ ?_
+  rw [Matrix.mul_apply]
+  exact Ideal.sum_mem _ fun l _ => Ideal.mul_mem_left _ _ (hM l k)
+
+/-- **A below-diagonal entry of a product of two triangular matrices is caught by the
+ideal.**  In `(M M')_{ij} = Σ_k M_{ik} M'_{kj}` with `j < i`, each term has `k < i` or
+`j < k`, so it is a multiple of a below-diagonal entry of one of the factors. -/
+theorem triangular_mul_mem {R : Type} [CommRing R] {J : Ideal R}
+    {M M' : Matrix (Fin n) (Fin n) R} (hM : ∀ i k : Fin n, k < i → M i k ∈ J)
+    (hM' : ∀ k j : Fin n, j < k → M' k j ∈ J) {i j : Fin n} (hij : j < i) :
+    (M * M') i j ∈ J := by
+  rw [Matrix.mul_apply]
+  refine Ideal.sum_mem _ fun k _ => ?_
+  rcases lt_or_ge k i with hk | hk
+  · exact Ideal.mul_mem_right _ _ (hM i k hk)
+  · exact Ideal.mul_mem_left _ _ (hM' k j (lt_of_lt_of_le hij hk))
+
+variable (K n)
+
+/-- The left inclusion `K[γ] → K[γ ⊕ γ]`. -/
+noncomputable def inlHom :
+    MvPolynomial (GLIdx n) K →ₐ[K] MvPolynomial (GLIdx n ⊕ GLIdx n) K :=
+  aeval fun c => X (Sum.inl c)
+
+/-- The right inclusion `K[γ] → K[γ ⊕ γ]`. -/
+noncomputable def inrHom :
+    MvPolynomial (GLIdx n) K →ₐ[K] MvPolynomial (GLIdx n ⊕ GLIdx n) K :=
+  aeval fun c => X (Sum.inr c)
+
+/-- **The product of the pair model**: `(g, h) (g', h') = (g g', h' h)`. -/
+noncomputable def glMul : GLIdx n → MvPolynomial (GLIdx n ⊕ GLIdx n) K :=
+  Sum.elim
+    (fun c => ((gVar K n).map (inlHom K n) * (gVar K n).map (inrHom K n)) c.1 c.2)
+    (fun c => ((hVar K n).map (inrHom K n) * (hVar K n).map (inlHom K n)) c.1 c.2)
+
+/-- **The inverse of the pair model**: the swap `(g, h) ↦ (h, g)`. -/
+noncomputable def glInv : GLIdx n → MvPolynomial (GLIdx n) K :=
+  Sum.elim (fun c => X (Sum.inr c)) (fun c => X (Sum.inl c))
+
+/-- **The unit of the pair model**: `(1, 1)`. -/
+def glOne : GLIdx n → K :=
+  Sum.elim (fun c => (1 : Matrix (Fin n) (Fin n) K) c.1 c.2)
+    (fun c => (1 : Matrix (Fin n) (Fin n) K) c.1 c.2)
+
+variable {K n}
+
+theorem aeval_glMul : (aeval (glMul K n) : MvPolynomial (GLIdx n) K →ₐ[K] _)
+    = pairAeval K n ((gVar K n).map (inlHom K n) * (gVar K n).map (inrHom K n))
+        ((hVar K n).map (inrHom K n) * (hVar K n).map (inlHom K n)) :=
+  pairAeval_ext (by ext i j; simp [glMul]) (by ext i j; simp [glMul])
+
+theorem aeval_glInv : (aeval (glInv K n) : MvPolynomial (GLIdx n) K →ₐ[K] _)
+    = pairAeval K n (hVar K n) (gVar K n) :=
+  pairAeval_ext (by ext i j; simp [glInv]) (by ext i j; simp [glInv])
+
+theorem aeval_glOne : (aeval (glOne K n) : MvPolynomial (GLIdx n) K →ₐ[K] K)
+    = pairAeval K n 1 1 :=
+  pairAeval_ext (by ext i j; simp [glOne]) (by ext i j; simp [glOne])
+
+theorem tensorOfSum_comp_inlHom :
+    (tensorOfSum K (GLIdx n)).comp (inlHom K n) =
+      (Algebra.TensorProduct.includeLeft :
+        MvPolynomial (GLIdx n) K →ₐ[K] MvPolynomial (GLIdx n) K ⊗[K] MvPolynomial (GLIdx n) K) :=
+  MvPolynomial.algHom_ext fun c => by simp [tensorOfSum, inlHom]
+
+theorem tensorOfSum_comp_inrHom :
+    (tensorOfSum K (GLIdx n)).comp (inrHom K n) =
+      (Algebra.TensorProduct.includeRight :
+        MvPolynomial (GLIdx n) K →ₐ[K] MvPolynomial (GLIdx n) K ⊗[K] MvPolynomial (GLIdx n) K) :=
+  MvPolynomial.algHom_ext fun c => by simp [tensorOfSum, inrHom]
+
+/-! ### The descent conditions -/
+
+/-- Membership in a sup of ideals, read in the sup of the underlying `K`-submodules. -/
+private theorem mem_restrictScalars_sup {S : Type} [CommRing S] [Algebra K S]
+    {J₁ J₂ : Ideal S} {x : S} (hx : x ∈ J₁ ⊔ J₂) :
+    x ∈ (J₁.restrictScalars K) ⊔ (J₂.restrictScalars K) := by
+  obtain ⟨y, hy, z, hz, hyz⟩ := Submodule.mem_sup.mp hx
+  exact Submodule.mem_sup.mpr ⟨y, hy, z, hz, hyz⟩
+
+theorem map_inlHom_map_tensorOfSum (M : Matrix (Fin n) (Fin n) (MvPolynomial (GLIdx n) K)) :
+    (M.map (inlHom K n)).map (tensorOfSum K (GLIdx n))
+      = M.map (Algebra.TensorProduct.includeLeft :
+          MvPolynomial (GLIdx n) K →ₐ[K] MvPolynomial (GLIdx n) K ⊗[K] MvPolynomial (GLIdx n) K) :=
+  Matrix.ext fun i j => congrArg
+    (fun φ : MvPolynomial (GLIdx n) K →ₐ[K] _ => φ (M i j)) tensorOfSum_comp_inlHom
+
+theorem map_inrHom_map_tensorOfSum (M : Matrix (Fin n) (Fin n) (MvPolynomial (GLIdx n) K)) :
+    (M.map (inrHom K n)).map (tensorOfSum K (GLIdx n))
+      = M.map (Algebra.TensorProduct.includeRight :
+          MvPolynomial (GLIdx n) K →ₐ[K] MvPolynomial (GLIdx n) K ⊗[K] MvPolynomial (GLIdx n) K) :=
+  Matrix.ext fun i j => congrArg
+    (fun φ : MvPolynomial (GLIdx n) K →ₐ[K] _ => φ (M i j)) tensorOfSum_comp_inrHom
+
+/-- The composite `tensorOfSum ∘ aeval glMul` is the pair `(g ⊗ 1 · 1 ⊗ g, 1 ⊗ h · h ⊗ 1)`. -/
+theorem tensorOfSum_comp_aeval_glMul :
+    ((tensorOfSum K (GLIdx n)).comp (aeval (glMul K n)) :
+        MvPolynomial (GLIdx n) K →ₐ[K] _)
+      = pairAeval K n
+          ((gVar K n).map (Algebra.TensorProduct.includeLeft :
+              MvPolynomial (GLIdx n) K →ₐ[K] _) *
+            (gVar K n).map (Algebra.TensorProduct.includeRight :
+              MvPolynomial (GLIdx n) K →ₐ[K] _))
+          ((hVar K n).map (Algebra.TensorProduct.includeRight :
+              MvPolynomial (GLIdx n) K →ₐ[K] _) *
+            (hVar K n).map (Algebra.TensorProduct.includeLeft :
+              MvPolynomial (GLIdx n) K →ₐ[K] _)) := by
+  rw [aeval_glMul, comp_pairAeval, Matrix.map_mul, Matrix.map_mul,
+    map_inlHom_map_tensorOfSum, map_inrHom_map_tensorOfSum, map_inrHom_map_tensorOfSum,
+    map_inlHom_map_tensorOfSum]
+
+/-- The image of the relation `g h − 1` under an algebra map lies in the image ideal. -/
+theorem gh_rel_map_mem {S : Type} [CommRing S] [Algebra K S]
+    (φ : MvPolynomial (GLIdx n) K →ₐ[K] S) (i j : Fin n) :
+    ((gVar K n).map φ * (hVar K n).map φ - 1) i j ∈ (glIdeal K n).map φ := by
+  rw [← map_rel]
+  exact Ideal.mem_map_of_mem _ (gh_sub_one_mem i j)
+
+theorem hg_rel_map_mem {S : Type} [CommRing S] [Algebra K S]
+    (φ : MvPolynomial (GLIdx n) K →ₐ[K] S) (i j : Fin n) :
+    ((hVar K n).map φ * (gVar K n).map φ - 1) i j ∈ (glIdeal K n).map φ := by
+  rw [← map_rel]
+  exact Ideal.mem_map_of_mem _ (hg_sub_one_mem i j)
+
+/-- **The product carries the `GL_n` relations into `J ⊗ 1 + 1 ⊗ J`**, for every ideal `J`
+containing them: `(g₁g₂)(h₂h₁) − 1 = g₁(g₂h₂ − 1)h₁ + (g₁h₁ − 1)` and its mirror.  This is the
+descent condition for the product, for `glIdeal` itself (`glData`) and for the ideal of any
+closed subgroup (`GroupPresentation.restrict`, e.g. `centIdeal`). -/
+theorem glIdeal_le_comap_map_sup {J : Ideal (MvPolynomial (GLIdx n) K)} (hIJ : glIdeal K n ≤ J) :
+    glIdeal K n ≤ Ideal.comap
+      ((tensorOfSum K (GLIdx n)).comp (aeval (glMul K n)) :
+        MvPolynomial (GLIdx n) K →ₐ[K] _)
+      (J.map (Algebra.TensorProduct.includeLeft :
+          MvPolynomial (GLIdx n) K →ₐ[K] MvPolynomial (GLIdx n) K ⊗[K] MvPolynomial (GLIdx n) K) ⊔
+        J.map (Algebra.TensorProduct.includeRight :
+          MvPolynomial (GLIdx n) K →ₐ[K] MvPolynomial (GLIdx n) K ⊗[K] MvPolynomial (GLIdx n) K))
+    := by
+  set L : MvPolynomial (GLIdx n) K →ₐ[K]
+      MvPolynomial (GLIdx n) K ⊗[K] MvPolynomial (GLIdx n) K :=
+    Algebra.TensorProduct.includeLeft with hL
+  set R : MvPolynomial (GLIdx n) K →ₐ[K]
+      MvPolynomial (GLIdx n) K ⊗[K] MvPolynomial (GLIdx n) K :=
+    Algebra.TensorProduct.includeRight with hR
+  have hJl : ∀ i j, ((gVar K n).map L * (hVar K n).map L - 1) i j ∈ J.map L ⊔ J.map R :=
+    fun i j => Ideal.mem_sup_left (Ideal.map_mono hIJ (gh_rel_map_mem L i j))
+  have hJr : ∀ i j, ((gVar K n).map R * (hVar K n).map R - 1) i j ∈ J.map L ⊔ J.map R :=
+    fun i j => Ideal.mem_sup_right (Ideal.map_mono hIJ (gh_rel_map_mem R i j))
+  have hJl' : ∀ i j, ((hVar K n).map L * (gVar K n).map L - 1) i j ∈ J.map L ⊔ J.map R :=
+    fun i j => Ideal.mem_sup_left (Ideal.map_mono hIJ (hg_rel_map_mem L i j))
+  have hJr' : ∀ i j, ((hVar K n).map R * (gVar K n).map R - 1) i j ∈ J.map L ⊔ J.map R :=
+    fun i j => Ideal.mem_sup_right (Ideal.map_mono hIJ (hg_rel_map_mem R i j))
+  refine glIdeal_le (fun i j => ?_) (fun i j => ?_)
+  · rw [Ideal.mem_comap, map_rel, tensorOfSum_comp_aeval_glMul, map_gVar, map_hVar]
+    have hid : ((gVar K n).map L * (gVar K n).map R) *
+        ((hVar K n).map R * (hVar K n).map L) - 1 =
+        (gVar K n).map L * ((gVar K n).map R * (hVar K n).map R - 1) * (hVar K n).map L +
+          ((gVar K n).map L * (hVar K n).map L - 1) := by
+      noncomm_ring
+    rw [hid, Matrix.add_apply]
+    exact Ideal.add_mem _ (entry_mul_mem hJr _ _ i j) (hJl i j)
+  · rw [Ideal.mem_comap, map_rel, tensorOfSum_comp_aeval_glMul, map_gVar, map_hVar]
+    have hid : ((hVar K n).map R * (hVar K n).map L) *
+        ((gVar K n).map L * (gVar K n).map R) - 1 =
+        (hVar K n).map R * ((hVar K n).map L * (gVar K n).map L - 1) * (gVar K n).map R +
+          ((hVar K n).map R * (gVar K n).map R - 1) := by
+      noncomm_ring
+    rw [hid, Matrix.add_apply]
+    exact Ideal.add_mem _ (entry_mul_mem hJl' _ _ i j) (hJr' i j)
+
+/-- **The inverse carries the `GL_n` relations into any ideal containing them** (the swap
+exchanges `gh − 1` and `hg − 1`). -/
+theorem glIdeal_le_comap_glInv {J : Ideal (MvPolynomial (GLIdx n) K)} (hIJ : glIdeal K n ≤ J) :
+    glIdeal K n ≤ Ideal.comap
+      (aeval (glInv K n) : MvPolynomial (GLIdx n) K →ₐ[K] _) J := by
+  refine glIdeal_le (fun i j => ?_) (fun i j => ?_)
+  · rw [Ideal.mem_comap, map_rel, aeval_glInv, map_gVar, map_hVar]
+    exact hIJ (hg_sub_one_mem i j)
+  · rw [Ideal.mem_comap, map_rel, aeval_glInv, map_gVar, map_hVar]
+    exact hIJ (gh_sub_one_mem i j)
+
+/-- **The unit kills the `GL_n` relations.** -/
+theorem glIdeal_le_comap_glOne :
+    glIdeal K n ≤ Ideal.comap (aeval (glOne K n) : MvPolynomial (GLIdx n) K →ₐ[K] K) ⊥ := by
+  refine glIdeal_le (fun i j => ?_) (fun i j => ?_) <;>
+    · rw [Ideal.mem_comap, map_rel, aeval_glOne, map_gVar, map_hVar, one_mul, sub_self]
+      exact Ideal.zero_mem _
+
+variable (K n)
+
+/-- **The pair model of `GL_n`, as `GroupData`.** -/
+noncomputable def glData : GroupData K (GLIdx n) where
+  I := glIdeal K n
+  mul := glMul K n
+  inv := glInv K n
+  one := glOne K n
+  mul_mem := GroupData.mul_mem_of_mem_sup fun _ hf =>
+    mem_restrictScalars_sup (glIdeal_le_comap_map_sup le_rfl hf)
+  inv_mem := fun _ hf =>
+    Ideal.Quotient.eq_zero_iff_mem.mpr (glIdeal_le_comap_glInv le_rfl hf)
+  one_mem := fun _ hf => Ideal.mem_bot.mp (glIdeal_le_comap_glOne hf)
+
+variable {K n}
+
+@[simp] theorem glData_I : (glData K n).I = glIdeal K n := rfl
+@[simp] theorem glData_mul : (glData K n).mul = glMul K n := rfl
+@[simp] theorem glData_inv : (glData K n).inv = glInv K n := rfl
+@[simp] theorem glData_one : (glData K n).one = glOne K n := rfl
+/-! ### The `K`-points
+
+`pts` is the set of pairs of mutually inverse matrices — `Chain/Untwist`'s `glPair`, which
+is not named here because `Geometry` must not import `Chain`; the identification with
+`glPair` in `pairCoords` terms is left to the consumer. -/
+
+variable (K n)
+
+/-- The first block of a `K`-point, as a matrix. -/
+def gPt (x : GLIdx n → K) : Matrix (Fin n) (Fin n) K := Matrix.of fun i j => x (Sum.inl (i, j))
+
+/-- The second block of a `K`-point, as a matrix. -/
+def hPt (x : GLIdx n → K) : Matrix (Fin n) (Fin n) K := Matrix.of fun i j => x (Sum.inr (i, j))
+
+variable {K n}
+
+theorem aeval_eq_pairAeval (x : GLIdx n → K) :
+    (aeval x : MvPolynomial (GLIdx n) K →ₐ[K] K) = pairAeval K n (gPt K n x) (hPt K n x) := by
+  refine MvPolynomial.algHom_ext fun c => ?_
+  obtain (c | c) := c <;> simp [gPt, hPt]
+
+/-- **The `K`-points of the pair model of `GL_n`** are the pairs `(g, h)` of matrices with
+`g h = 1` and `h g = 1`. -/
+theorem mem_glData_pts_iff (x : GLIdx n → K) :
+    x ∈ (glData K n).pts ↔ gPt K n x * hPt K n x = 1 ∧ hPt K n x * gPt K n x = 1 := by
+  constructor
+  · intro hx
+    constructor
+    · refine sub_eq_zero.mp (Matrix.ext fun i j => ?_)
+      have hk : (aeval x : MvPolynomial (GLIdx n) K →ₐ[K] K)
+          ((gVar K n * hVar K n - 1) i j) = 0 := hx _ (gh_sub_one_mem i j)
+      rw [aeval_eq_pairAeval, map_rel, map_gVar, map_hVar] at hk
+      rw [Matrix.zero_apply]
+      exact hk
+    · refine sub_eq_zero.mp (Matrix.ext fun i j => ?_)
+      have hk : (aeval x : MvPolynomial (GLIdx n) K →ₐ[K] K)
+          ((hVar K n * gVar K n - 1) i j) = 0 := hx _ (hg_sub_one_mem i j)
+      rw [aeval_eq_pairAeval, map_rel, map_hVar, map_gVar] at hk
+      rw [Matrix.zero_apply]
+      exact hk
+  · rintro ⟨h1, h2⟩
+    have hle : glIdeal K n ≤
+        Ideal.comap (aeval x : MvPolynomial (GLIdx n) K →ₐ[K] K) ⊥ := by
+      refine glIdeal_le (fun i j => ?_) (fun i j => ?_)
+      · rw [Ideal.mem_comap, aeval_eq_pairAeval, map_rel, map_gVar, map_hVar, h1, sub_self]
+        exact Ideal.zero_mem _
+      · rw [Ideal.mem_comap, aeval_eq_pairAeval, map_rel, map_hVar, map_gVar, h2, sub_self]
+        exact Ideal.zero_mem _
+    exact fun f hf => Ideal.mem_bot.mp (hle hf)
+
+/-! ### The Hopf axioms, from the group laws
+
+The product `(g, h) (g', h') = (g g', h' h)` is associative and unital on the nose — matrix
+algebra, entry by entry — and the two inverse laws are the two defining relations
+`h g − 1` and `g h − 1` of the ideal.  These five polynomial identities are the hypotheses
+of `GroupPresentation.ofLaws`, which turns them into the five Hopf axioms; no `K`-point
+computation is involved. -/
+
+variable (K n)
+
+/-- **The pair model of `GL_n`, as a `GroupPresentation`.** -/
+noncomputable def glPresentation : GroupPresentation K (GLIdx n) :=
+  GroupPresentation.ofLaws (glData K n)
+    (fun i => sub_mem_of_eq (by
+      cases i <;>
+        · simp [GroupData.mulAssocL, GroupData.mulAssocR, GroupData.mul12, GroupData.mul23,
+            glMul, inlHom, inrHom, Matrix.mul_apply, Finset.mul_sum, Finset.sum_mul, mul_assoc]
+          exact Finset.sum_comm))
+    (fun i => sub_mem_of_eq (by
+      cases i <;>
+        simp [GroupData.oneMul, glMul, inlHom, inrHom, glOne, Matrix.mul_apply,
+          Matrix.one_apply]))
+    (fun i => sub_mem_of_eq (by
+      cases i <;>
+        simp [GroupData.mulOne, glMul, inlHom, inrHom, glOne, Matrix.mul_apply,
+          Matrix.one_apply]))
+    (fun i => by
+      cases i with
+      | inl c =>
+          exact mem_ideal_of_eq (show _ = (hVar K n * gVar K n - 1) c.1 c.2 by
+            simp [GroupData.invMul, glMul, glInv, glOne, inlHom, inrHom, Matrix.mul_apply,
+              Matrix.sub_apply, Matrix.one_apply]) (hg_sub_one_mem c.1 c.2)
+      | inr c =>
+          exact mem_ideal_of_eq (show _ = (hVar K n * gVar K n - 1) c.1 c.2 by
+            simp [GroupData.invMul, glMul, glInv, glOne, inlHom, inrHom, Matrix.mul_apply,
+              Matrix.sub_apply, Matrix.one_apply]) (hg_sub_one_mem c.1 c.2))
+    (fun i => by
+      cases i with
+      | inl c =>
+          exact mem_ideal_of_eq (show _ = (gVar K n * hVar K n - 1) c.1 c.2 by
+            simp [GroupData.mulInv, glMul, glInv, glOne, inlHom, inrHom, Matrix.mul_apply,
+              Matrix.sub_apply, Matrix.one_apply]) (gh_sub_one_mem c.1 c.2)
+      | inr c =>
+          exact mem_ideal_of_eq (show _ = (gVar K n * hVar K n - 1) c.1 c.2 by
+            simp [GroupData.mulInv, glMul, glInv, glOne, inlHom, inrHom, Matrix.mul_apply,
+              Matrix.sub_apply, Matrix.one_apply]) (gh_sub_one_mem c.1 c.2))
+
+variable {K n}
+
+@[simp] theorem glPresentation_toGroupData :
+    (glPresentation K n).toGroupData = glData K n := rfl
+
+/-- Sanity check: the pair model is a group object over `Spec K`, of finite type. -/
+noncomputable example : GrpObj (glPresentation K n).scheme := inferInstance
+
+example : LocallyOfFiniteType (glPresentation K n).scheme.hom := inferInstance
+
+/-! ### The regular action of the pair model
+
+`GL_n` acts on itself.  `Spec.lean` §4's action is a *left* action (`ModObj`), and the left
+action underlying the conjugation fibration is `a ⋆ x = x · a⁻¹`; in the pair model the
+inverse is the swap, so this is polynomial:
+
+    a ⋆ x = (g_x h_a, g_a h_x).
+
+The space is all of `𝔸(2n²)` (`J = ⊥`), so the `K`-point corollaries of `Geometry/Group.lean`
+apply to it verbatim.  The coaction is
+
+    g ↦ Σ_k g_k ⊗ h_k,   h ↦ Σ_k h_k ⊗ g_k
+
+(space on the left, group on the right), and the two comodule laws are the two matrix
+identities `Δh = h ⊗ h` flipped and `Δg = g ⊗ g` flipped — the co-opposite convention of
+`ActionPresentation`. -/
+
+variable (K n)
+
+/-- **The regular action of the pair model**, in coordinates: `a ⋆ x = (g_x h_a, g_a h_x)`. -/
+noncomputable def glAct : GLIdx n → MvPolynomial (GLIdx n ⊕ GLIdx n) K :=
+  Sum.elim
+    (fun c => ((gVar K n).map (inrHom K n) * (hVar K n).map (inlHom K n)) c.1 c.2)
+    (fun c => ((gVar K n).map (inlHom K n) * (hVar K n).map (inrHom K n)) c.1 c.2)
+
+
+/-- The action data of the regular action: the whole affine space `𝔸(2n²)` (`J = ⊥`). -/
+noncomputable def glRegData : ActionData (glData K n) (GLIdx n) where
+  J := ⊥
+  act := glAct K n
+  act_mem := fun f hf => by
+    rw [Ideal.mem_bot.mp hf, map_zero, map_zero, map_zero]
+
+@[simp] theorem glRegData_J : (glRegData K n).J = ⊥ := rfl
+@[simp] theorem glRegData_act : (glRegData K n).act = glAct K n := rfl
+
+
+/-- **The regular action of the pair model of `GL_n` on `𝔸(2n²)`**, `a ⋆ x = x · a⁻¹`.  The
+two comodule axioms are the two action laws as polynomial identities
+(`ActionPresentation.ofLaws`): `1 ⋆ x = x` and `b ⋆ (a ⋆ x) = (b a) ⋆ x`, both matrix
+algebra on the nose. -/
+noncomputable def regularAction : ActionPresentation (glPresentation K n) (GLIdx n) :=
+  ActionPresentation.ofLaws (glRegData K n)
+    (fun i => sub_mem_of_eq (by
+      cases i <;>
+        simp [ActionData.oneAct, glAct, inlHom, inrHom, glOne, Matrix.mul_apply,
+          Matrix.one_apply]))
+    (fun i => sub_mem_of_eq (by
+      cases i <;>
+        · simp [ActionData.actAct, ActionData.mulAct, ActionData.act1, GroupData.mulFlip,
+            glAct, glMul, inlHom, inrHom, Matrix.mul_apply, Finset.mul_sum, Finset.sum_mul,
+            mul_assoc]
+          exact Finset.sum_comm))
+variable {K n}
+
+/-- The bridge to `glRegData`: `glPresentation_toGroupData` normalises the group index of an
+`ActionData`, so the `K`-point lemmas below are stated for `glRegData` and this `rfl` lemma
+carries `simp` from `regularAction` to it. -/
+@[simp] theorem regularAction_toActionData :
+    (regularAction K n).toActionData = glRegData K n := rfl
+
+theorem regularAction_J : (regularAction K n).J = ⊥ := rfl
+
+/-- **The `K`-points of the regular action**: the first block of `a ⋆ x` is `g_x h_a`. -/
+@[simp] theorem gPt_glRegData_actPt (a x : GLIdx n → K) :
+    gPt K n ((glRegData K n).actPt a x) = gPt K n x * hPt K n a := by
+  ext i j
+  simp [gPt, hPt, ActionData.actPt, glAct, Matrix.mul_apply, inlHom, inrHom]
+
+/-- **The `K`-points of the regular action**: the second block of `a ⋆ x` is `g_a h_x`. -/
+@[simp] theorem hPt_glRegData_actPt (a x : GLIdx n → K) :
+    hPt K n ((glRegData K n).actPt a x) = gPt K n a * hPt K n x := by
+  ext i j
+  simp [gPt, hPt, ActionData.actPt, glAct, Matrix.mul_apply, inlHom, inrHom]
+
+/-! ### The centraliser of a matrix, as a closed subgroup
+
+`GroupPresentation.restrict` asks for an ideal `J ⊇ I` with the three descent conditions.  For
+the centraliser of a matrix `N` — the ideal generated by the `GL_n` relations and the entries
+of `g N − N g` — those are three matrix identities:
+
+    (g₁g₂)N − N(g₁g₂) = g₁(g₂N − Ng₂) + (g₁N − Ng₁)g₂,
+    hN − Nh = −h(gN − Ng)h − hN(gh − 1) + (hg − 1)Nh,
+    1·N − N·1 = 0,
+
+the middle one modulo `gh = hg = 1`.  No `K`-point computation is involved, so no geometric
+reducedness is needed; `mem_centralizer_pts_iff` reads the `K`-points off afterwards.  This is
+the consumer-facing test of the closed-subgroup interface. -/
+
+variable (K n)
+
+/-- A constant matrix, as a matrix of polynomials. -/
+noncomputable def cMat (N : Matrix (Fin n) (Fin n) K) :
+    Matrix (Fin n) (Fin n) (MvPolynomial (GLIdx n) K) :=
+  N.map (algebraMap K (MvPolynomial (GLIdx n) K))
+
+variable {K n}
+
+@[simp] theorem map_cMat {B : Type} [CommRing B] [Algebra K B]
+    (N : Matrix (Fin n) (Fin n) K) (φ : MvPolynomial (GLIdx n) K →ₐ[K] B) :
+    (cMat K n N).map φ = N.map (algebraMap K B) :=
+  Matrix.ext fun i j => φ.commutes (N i j)
+
+@[simp] theorem map_algebraMap_self (N : Matrix (Fin n) (Fin n) K) :
+    N.map (algebraMap K K) = N := Matrix.ext fun _ _ => rfl
+
+/-- An algebra map sends a commutator relation to the same relation on the images. -/
+theorem map_comm_rel {B : Type} [CommRing B] [Algebra K B]
+    (φ : MvPolynomial (GLIdx n) K →ₐ[K] B)
+    (M M' : Matrix (Fin n) (Fin n) (MvPolynomial (GLIdx n) K)) (i j : Fin n) :
+    φ ((M * M' - M' * M) i j) = (M.map φ * M'.map φ - M'.map φ * M.map φ) i j := by
+  simp [Matrix.sub_apply, Matrix.mul_apply]
+
+variable (K n)
+
+/-- **The ideal of the centraliser of `N`**: the `GL_n` relations together with the entries of
+`g N − N g`. -/
+noncomputable def centIdeal (N : Matrix (Fin n) (Fin n) K) : Ideal (MvPolynomial (GLIdx n) K) :=
+  glIdeal K n ⊔ Ideal.span {p | ∃ i j, p = (gVar K n * cMat K n N - cMat K n N * gVar K n) i j}
+
+variable {K n}
+
+theorem glIdeal_le_centIdeal (N : Matrix (Fin n) (Fin n) K) :
+    glIdeal K n ≤ centIdeal K n N := le_sup_left
+
+theorem cent_rel_mem (N : Matrix (Fin n) (Fin n) K) (i j : Fin n) :
+    (gVar K n * cMat K n N - cMat K n N * gVar K n) i j ∈ centIdeal K n N :=
+  Ideal.mem_sup_right (Ideal.subset_span ⟨i, j, rfl⟩)
+
+/-- The ideal is generated by the three matrix relations, so containment is tested on them. -/
+theorem centIdeal_le {N : Matrix (Fin n) (Fin n) K} {J : Ideal (MvPolynomial (GLIdx n) K)}
+    (hg : ∀ i j, (gVar K n * hVar K n - 1) i j ∈ J)
+    (hh : ∀ i j, (hVar K n * gVar K n - 1) i j ∈ J)
+    (hc : ∀ i j, (gVar K n * cMat K n N - cMat K n N * gVar K n) i j ∈ J) :
+    centIdeal K n N ≤ J :=
+  sup_le (glIdeal_le hg hh) (Ideal.span_le.mpr (by rintro p ⟨i, j, rfl⟩; exact hc i j))
+
+/-- The image of the commutator relation under an algebra map lies in the image ideal. -/
+theorem cent_rel_map_mem {S : Type} [CommRing S] [Algebra K S]
+    (N : Matrix (Fin n) (Fin n) K) (φ : MvPolynomial (GLIdx n) K →ₐ[K] S) (i j : Fin n) :
+    ((gVar K n).map φ * N.map (algebraMap K S) - N.map (algebraMap K S) * (gVar K n).map φ) i j
+      ∈ (centIdeal K n N).map φ := by
+  rw [← map_cMat N φ, ← map_comm_rel]
+  exact Ideal.mem_map_of_mem _ (cent_rel_mem N i j)
+
+/-- **The inverse descends**: `hN − Nh = −h(gN − Ng)h − hN(gh − 1) + (hg − 1)Nh`. -/
+theorem hVar_cMat_comm_mem (N : Matrix (Fin n) (Fin n) K) (i j : Fin n) :
+    (hVar K n * cMat K n N - cMat K n N * hVar K n) i j ∈ centIdeal K n N := by
+  have hid : hVar K n * cMat K n N - cMat K n N * hVar K n
+      = -(hVar K n * (gVar K n * cMat K n N - cMat K n N * gVar K n) * hVar K n)
+        - (hVar K n * cMat K n N) * (gVar K n * hVar K n - 1) * 1
+        + 1 * (hVar K n * gVar K n - 1) * (cMat K n N * hVar K n) := by
+    noncomm_ring
+  rw [hid, Matrix.add_apply, Matrix.sub_apply, Matrix.neg_apply]
+  refine Ideal.add_mem _ (Ideal.sub_mem _ (neg_mem ?_) ?_) ?_
+  · exact entry_mul_mem (cent_rel_mem N) _ _ i j
+  · exact entry_mul_mem (fun i j => glIdeal_le_centIdeal N (gh_sub_one_mem i j)) _ _ i j
+  · exact entry_mul_mem (fun i j => glIdeal_le_centIdeal N (hg_sub_one_mem i j)) _ _ i j
+
+/-- **The product descends**: `(g₁g₂)N − N(g₁g₂) = g₁(g₂N − Ng₂) + (g₁N − Ng₁)g₂`. -/
+theorem centIdeal_mul_mem (N : Matrix (Fin n) (Fin n) K) :
+    ∀ f ∈ centIdeal K n N, Algebra.TensorProduct.map
+      (Ideal.Quotient.mkₐ K (centIdeal K n N)) (Ideal.Quotient.mkₐ K (centIdeal K n N))
+      (tensorOfSum K (GLIdx n) (aeval (glMul K n) f)) = 0 := by
+  refine GroupData.mul_mem_of_mem_sup ?_
+  set L : MvPolynomial (GLIdx n) K →ₐ[K]
+      MvPolynomial (GLIdx n) K ⊗[K] MvPolynomial (GLIdx n) K :=
+    Algebra.TensorProduct.includeLeft with hL
+  set R : MvPolynomial (GLIdx n) K →ₐ[K]
+      MvPolynomial (GLIdx n) K ⊗[K] MvPolynomial (GLIdx n) K :=
+    Algebra.TensorProduct.includeRight with hR
+  have hle : centIdeal K n N ≤ Ideal.comap
+      ((tensorOfSum K (GLIdx n)).comp (aeval (glMul K n)) :
+        MvPolynomial (GLIdx n) K →ₐ[K] _)
+      ((centIdeal K n N).map L ⊔ (centIdeal K n N).map R) := by
+    refine sup_le (glIdeal_le_comap_map_sup (glIdeal_le_centIdeal N)) (Ideal.span_le.mpr ?_)
+    rintro p ⟨i, j, rfl⟩
+    rw [SetLike.mem_coe, Ideal.mem_comap, map_comm_rel, tensorOfSum_comp_aeval_glMul,
+      map_gVar, map_cMat]
+    have hid : ((gVar K n).map L * (gVar K n).map R) * N.map (algebraMap K _)
+          - N.map (algebraMap K _) * ((gVar K n).map L * (gVar K n).map R)
+        = (gVar K n).map L * ((gVar K n).map R * N.map (algebraMap K _)
+            - N.map (algebraMap K _) * (gVar K n).map R) * 1
+          + 1 * ((gVar K n).map L * N.map (algebraMap K _)
+            - N.map (algebraMap K _) * (gVar K n).map L) * (gVar K n).map R := by
+      noncomm_ring
+    rw [hid, Matrix.add_apply]
+    exact Ideal.add_mem _
+      (entry_mul_mem (fun i j => Ideal.mem_sup_right (cent_rel_map_mem N R i j)) _ _ i j)
+      (entry_mul_mem (fun i j => Ideal.mem_sup_left (cent_rel_map_mem N L i j)) _ _ i j)
+  exact fun f hf => mem_restrictScalars_sup (hle hf)
+
+theorem centIdeal_inv_mem (N : Matrix (Fin n) (Fin n) K) :
+    ∀ f ∈ centIdeal K n N,
+      Ideal.Quotient.mk (centIdeal K n N) (aeval (glInv K n) f) = 0 := by
+  have hle : centIdeal K n N ≤ Ideal.comap
+      (aeval (glInv K n) : MvPolynomial (GLIdx n) K →ₐ[K] _) (centIdeal K n N) := by
+    refine centIdeal_le
+      (fun i j => glIdeal_le_comap_glInv (glIdeal_le_centIdeal N) (gh_sub_one_mem i j))
+      (fun i j => glIdeal_le_comap_glInv (glIdeal_le_centIdeal N) (hg_sub_one_mem i j))
+      (fun i j => ?_)
+    rw [Ideal.mem_comap, map_comm_rel, aeval_glInv, map_gVar, map_cMat]
+    exact hVar_cMat_comm_mem N i j
+  exact fun f hf => Ideal.Quotient.eq_zero_iff_mem.mpr (hle hf)
+
+theorem centIdeal_one_mem (N : Matrix (Fin n) (Fin n) K) :
+    ∀ f ∈ centIdeal K n N, aeval (glOne K n) f = 0 := by
+  have hle : centIdeal K n N ≤ Ideal.comap
+      (aeval (glOne K n) : MvPolynomial (GLIdx n) K →ₐ[K] K) ⊥ := by
+    refine centIdeal_le
+      (fun i j => glIdeal_le_comap_glOne (gh_sub_one_mem i j))
+      (fun i j => glIdeal_le_comap_glOne (hg_sub_one_mem i j)) (fun i j => ?_)
+    rw [Ideal.mem_comap, map_comm_rel, aeval_glOne, map_gVar, map_cMat, one_mul, mul_one,
+      sub_self]
+    exact Ideal.zero_mem _
+  exact fun f hf => Ideal.mem_bot.mp (hle hf)
+
+variable (K n)
+
+/-- **The centraliser of `N` in the pair model of `GL_n`, as a closed subgroup.** -/
+noncomputable def centralizer (N : Matrix (Fin n) (Fin n) K) : GroupPresentation K (GLIdx n) :=
+  (glPresentation K n).restrict (glIdeal_le_centIdeal N) (centIdeal_mul_mem N)
+    (centIdeal_inv_mem N) (centIdeal_one_mem N)
+
+variable {K n}
+
+@[simp] theorem centralizer_I (N : Matrix (Fin n) (Fin n) K) :
+    (centralizer K n N).I = centIdeal K n N := rfl
+
+@[simp] theorem centralizer_mul (N : Matrix (Fin n) (Fin n) K) :
+    (centralizer K n N).mul = glMul K n := rfl
+
+@[simp] theorem centralizer_inv (N : Matrix (Fin n) (Fin n) K) :
+    (centralizer K n N).inv = glInv K n := rfl
+
+@[simp] theorem centralizer_one (N : Matrix (Fin n) (Fin n) K) :
+    (centralizer K n N).one = glOne K n := rfl
+
+/-- **The `K`-points of the centraliser of `N`** are the pairs `(g, h)` of mutually inverse
+matrices with `g N = N g`. -/
+theorem mem_centralizer_pts_iff (N : Matrix (Fin n) (Fin n) K) (x : GLIdx n → K) :
+    x ∈ (centralizer K n N).pts ↔
+      gPt K n x * hPt K n x = 1 ∧ hPt K n x * gPt K n x = 1 ∧
+        gPt K n x * N = N * gPt K n x := by
+  constructor
+  · intro hx
+    obtain ⟨h1, h2⟩ := (mem_glData_pts_iff x).mp fun f hf => hx f (glIdeal_le_centIdeal N hf)
+    refine ⟨h1, h2, sub_eq_zero.mp (Matrix.ext fun i j => ?_)⟩
+    have hk : (aeval x : MvPolynomial (GLIdx n) K →ₐ[K] K)
+        ((gVar K n * cMat K n N - cMat K n N * gVar K n) i j) = 0 := hx _ (cent_rel_mem N i j)
+    rw [aeval_eq_pairAeval, map_comm_rel, map_gVar, map_cMat, map_algebraMap_self] at hk
+    rw [Matrix.zero_apply]
+    exact hk
+  · rintro ⟨h1, h2, h3⟩
+    have hle : centIdeal K n N ≤
+        Ideal.comap (aeval x : MvPolynomial (GLIdx n) K →ₐ[K] K) ⊥ := by
+      refine centIdeal_le (fun i j => ?_) (fun i j => ?_) (fun i j => ?_)
+      · rw [Ideal.mem_comap, aeval_eq_pairAeval, map_rel, map_gVar, map_hVar, h1, sub_self]
+        exact Ideal.zero_mem _
+      · rw [Ideal.mem_comap, aeval_eq_pairAeval, map_rel, map_hVar, map_gVar, h2, sub_self]
+        exact Ideal.zero_mem _
+      · rw [Ideal.mem_comap, aeval_eq_pairAeval, map_comm_rel, map_gVar, map_cMat,
+          map_algebraMap_self, h3, sub_self]
+        exact Ideal.zero_mem _
+    exact fun f hf => Ideal.mem_bot.mp (hle hf)
+
+variable (K n)
+
+/-- **The regular action of `GL_n`, restricted to the centraliser of `N`** — the same
+coaction, the same `actPt`. -/
+noncomputable def centRegularAction (N : Matrix (Fin n) (Fin n) K) :
+    ActionPresentation (centralizer K n N) (GLIdx n) :=
+  (regularAction K n).restrictGroup (glIdeal_le_centIdeal N) (centIdeal_mul_mem N)
+    (centIdeal_inv_mem N) (centIdeal_one_mem N)
+
+variable {K n}
+
+theorem centRegularAction_toActionData (N : Matrix (Fin n) (Fin n) K) :
+    (centRegularAction K n N).toActionData
+      = (regularAction K n).restrictGroupData (glIdeal_le_centIdeal N) (centIdeal_mul_mem N)
+        (centIdeal_inv_mem N) (centIdeal_one_mem N) := rfl
+
+theorem centRegularAction_J (N : Matrix (Fin n) (Fin n) K) :
+    (centRegularAction K n N).J = ⊥ := rfl
+
+theorem centRegularAction_actPt (N : Matrix (Fin n) (Fin n) K) (a x : GLIdx n → K) :
+    (centRegularAction K n N).actPt a x = (regularAction K n).actPt a x := rfl
+
+/-- **The `K`-points of the restricted regular action**: unchanged. -/
+@[simp] theorem gPt_centRegularAction_actPt (N : Matrix (Fin n) (Fin n) K)
+    (a x : GLIdx n → K) :
+    gPt K n ((centRegularAction K n N).actPt a x) = gPt K n x * hPt K n a :=
+  gPt_glRegData_actPt a x
+
+@[simp] theorem hPt_centRegularAction_actPt (N : Matrix (Fin n) (Fin n) K)
+    (a x : GLIdx n → K) :
+    hPt K n ((centRegularAction K n N).actPt a x) = gPt K n a * hPt K n x :=
+  hPt_glRegData_actPt a x
+
+/-- Sanity check: the centraliser is a group object over `Spec K`, of finite type. -/
+noncomputable example (N : Matrix (Fin n) (Fin n) K) :
+    GrpObj (centralizer K n N).scheme := inferInstance
+
+example (N : Matrix (Fin n) (Fin n) K) :
+    LocallyOfFiniteType (centralizer K n N).scheme.hom := inferInstance
+
+/-! ### The Borel subgroup, as a closed subgroup
+
+The invertible upper triangular matrices are the closed subgroup of the pair model cut out by
+the below-diagonal entries of *both* blocks.  Taking both is what makes the three descent
+conditions immediate:
+
+* the product: a below-diagonal entry of `g₁g₂` is `Σ_k (g₁)_{ik} (g₂)_{kj}`, and each term
+  has `k < i` or `j < k` (`triangular_mul_mem`); the `h` block is the same product in the
+  other order;
+* the inverse: the swap `(g, h) ↦ (h, g)`, which preserves an ideal containing the
+  below-diagonal entries of both blocks.  One block alone would not do — the inverse of an
+  upper triangular matrix is upper triangular, but only modulo `g h = 1`, which is what
+  forces the second block into the ideal;
+* the unit `(1, 1)`, whose below-diagonal entries vanish.
+
+`mem_borel_pts_iff` reads off the `K`-points afterwards: the pairs of mutually inverse upper
+triangular matrices.  `Chain/Springer`'s Borel fibration of the partner incidence is the
+consumer. -/
+
+variable (K n)
+
+/-- **The ideal of the Borel subgroup**: the `GL_n` relations together with the
+below-diagonal entries of both blocks. -/
+noncomputable def borelIdeal : Ideal (MvPolynomial (GLIdx n) K) :=
+  glIdeal K n ⊔ Ideal.span {p | ∃ i j : Fin n, j < i ∧ (p = gVar K n i j ∨ p = hVar K n i j)}
+
+variable {K n}
+
+theorem glIdeal_le_borelIdeal : glIdeal K n ≤ borelIdeal K n := le_sup_left
+
+theorem gVar_mem_borelIdeal {i j : Fin n} (hij : j < i) : gVar K n i j ∈ borelIdeal K n :=
+  Ideal.mem_sup_right (Ideal.subset_span ⟨i, j, hij, Or.inl rfl⟩)
+
+theorem hVar_mem_borelIdeal {i j : Fin n} (hij : j < i) : hVar K n i j ∈ borelIdeal K n :=
+  Ideal.mem_sup_right (Ideal.subset_span ⟨i, j, hij, Or.inr rfl⟩)
+
+/-- The ideal is generated by the two `GL_n` relations and the two triangularity conditions,
+so containment is tested on them. -/
+theorem borelIdeal_le {J : Ideal (MvPolynomial (GLIdx n) K)}
+    (hg : ∀ i j, (gVar K n * hVar K n - 1) i j ∈ J)
+    (hh : ∀ i j, (hVar K n * gVar K n - 1) i j ∈ J)
+    (hbg : ∀ i j : Fin n, j < i → gVar K n i j ∈ J)
+    (hbh : ∀ i j : Fin n, j < i → hVar K n i j ∈ J) :
+    borelIdeal K n ≤ J :=
+  sup_le (glIdeal_le hg hh) (Ideal.span_le.mpr (by
+    rintro p ⟨i, j, hij, rfl | rfl⟩
+    · exact hbg i j hij
+    · exact hbh i j hij))
+
+/-- **The product descends**: `triangular_mul_mem` on each of the two blocks. -/
+theorem borelIdeal_mul_mem :
+    ∀ f ∈ borelIdeal K n, Algebra.TensorProduct.map
+      (Ideal.Quotient.mkₐ K (borelIdeal K n)) (Ideal.Quotient.mkₐ K (borelIdeal K n))
+      (tensorOfSum K (GLIdx n) (aeval (glMul K n) f)) = 0 := by
+  refine GroupData.mul_mem_of_mem_sup ?_
+  set L : MvPolynomial (GLIdx n) K →ₐ[K]
+      MvPolynomial (GLIdx n) K ⊗[K] MvPolynomial (GLIdx n) K :=
+    Algebra.TensorProduct.includeLeft with hL
+  set R : MvPolynomial (GLIdx n) K →ₐ[K]
+      MvPolynomial (GLIdx n) K ⊗[K] MvPolynomial (GLIdx n) K :=
+    Algebra.TensorProduct.includeRight with hR
+  set Φ : MvPolynomial (GLIdx n) K →ₐ[K]
+      MvPolynomial (GLIdx n) K ⊗[K] MvPolynomial (GLIdx n) K :=
+    (tensorOfSum K (GLIdx n)).comp (aeval (glMul K n)) with hΦ
+  have hΦg : (gVar K n).map Φ = (gVar K n).map L * (gVar K n).map R := by
+    rw [hΦ, tensorOfSum_comp_aeval_glMul, map_gVar]
+  have hΦh : (hVar K n).map Φ = (hVar K n).map R * (hVar K n).map L := by
+    rw [hΦ, tensorOfSum_comp_aeval_glMul, map_hVar]
+  have hle : borelIdeal K n ≤
+      Ideal.comap Φ ((borelIdeal K n).map L ⊔ (borelIdeal K n).map R) := by
+    refine borelIdeal_le
+      (fun i j => glIdeal_le_comap_map_sup glIdeal_le_borelIdeal (gh_sub_one_mem i j))
+      (fun i j => glIdeal_le_comap_map_sup glIdeal_le_borelIdeal (hg_sub_one_mem i j))
+      (fun i j hij => ?_) (fun i j hij => ?_)
+    · rw [Ideal.mem_comap, show Φ (gVar K n i j)
+        = ((gVar K n).map L * (gVar K n).map R) i j from congrFun (congrFun hΦg i) j]
+      exact triangular_mul_mem
+        (fun _ _ hk => Ideal.mem_sup_left (Ideal.mem_map_of_mem _ (gVar_mem_borelIdeal hk)))
+        (fun _ _ hk => Ideal.mem_sup_right (Ideal.mem_map_of_mem _ (gVar_mem_borelIdeal hk))) hij
+    · rw [Ideal.mem_comap, show Φ (hVar K n i j)
+        = ((hVar K n).map R * (hVar K n).map L) i j from congrFun (congrFun hΦh i) j]
+      exact triangular_mul_mem
+        (fun _ _ hk => Ideal.mem_sup_right (Ideal.mem_map_of_mem _ (hVar_mem_borelIdeal hk)))
+        (fun _ _ hk => Ideal.mem_sup_left (Ideal.mem_map_of_mem _ (hVar_mem_borelIdeal hk))) hij
+  exact fun f hf => mem_restrictScalars_sup (hle hf)
+
+/-- **The inverse descends**: the swap exchanges the two blocks, both of which are in the
+ideal. -/
+theorem borelIdeal_inv_mem :
+    ∀ f ∈ borelIdeal K n,
+      Ideal.Quotient.mk (borelIdeal K n) (aeval (glInv K n) f) = 0 := by
+  have hg : (gVar K n).map (aeval (glInv K n) : MvPolynomial (GLIdx n) K →ₐ[K] _)
+      = hVar K n := by rw [aeval_glInv, map_gVar]
+  have hh : (hVar K n).map (aeval (glInv K n) : MvPolynomial (GLIdx n) K →ₐ[K] _)
+      = gVar K n := by rw [aeval_glInv, map_hVar]
+  have hle : borelIdeal K n ≤ Ideal.comap
+      (aeval (glInv K n) : MvPolynomial (GLIdx n) K →ₐ[K] _) (borelIdeal K n) := by
+    refine borelIdeal_le
+      (fun i j => glIdeal_le_comap_glInv glIdeal_le_borelIdeal (gh_sub_one_mem i j))
+      (fun i j => glIdeal_le_comap_glInv glIdeal_le_borelIdeal (hg_sub_one_mem i j))
+      (fun i j hij => ?_) (fun i j hij => ?_)
+    · rw [Ideal.mem_comap,
+        show (aeval (glInv K n) : MvPolynomial (GLIdx n) K →ₐ[K] _) (gVar K n i j)
+          = hVar K n i j from congrFun (congrFun hg i) j]
+      exact hVar_mem_borelIdeal hij
+    · rw [Ideal.mem_comap,
+        show (aeval (glInv K n) : MvPolynomial (GLIdx n) K →ₐ[K] _) (hVar K n i j)
+          = gVar K n i j from congrFun (congrFun hh i) j]
+      exact gVar_mem_borelIdeal hij
+  exact fun f hf => Ideal.Quotient.eq_zero_iff_mem.mpr (hle hf)
+
+/-- **The unit kills the triangularity conditions**: `1` is upper triangular. -/
+theorem borelIdeal_one_mem : ∀ f ∈ borelIdeal K n, aeval (glOne K n) f = 0 := by
+  have hg : (gVar K n).map (aeval (glOne K n) : MvPolynomial (GLIdx n) K →ₐ[K] K)
+      = 1 := by rw [aeval_glOne, map_gVar]
+  have hh : (hVar K n).map (aeval (glOne K n) : MvPolynomial (GLIdx n) K →ₐ[K] K)
+      = 1 := by rw [aeval_glOne, map_hVar]
+  have hle : borelIdeal K n ≤ Ideal.comap
+      (aeval (glOne K n) : MvPolynomial (GLIdx n) K →ₐ[K] K) ⊥ := by
+    refine borelIdeal_le (fun i j => glIdeal_le_comap_glOne (gh_sub_one_mem i j))
+      (fun i j => glIdeal_le_comap_glOne (hg_sub_one_mem i j))
+      (fun i j hij => ?_) (fun i j hij => ?_)
+    · rw [Ideal.mem_comap,
+        show (aeval (glOne K n) : MvPolynomial (GLIdx n) K →ₐ[K] K) (gVar K n i j)
+          = (1 : Matrix (Fin n) (Fin n) K) i j from congrFun (congrFun hg i) j,
+        Matrix.one_apply_ne (ne_of_gt hij)]
+      exact Ideal.zero_mem _
+    · rw [Ideal.mem_comap,
+        show (aeval (glOne K n) : MvPolynomial (GLIdx n) K →ₐ[K] K) (hVar K n i j)
+          = (1 : Matrix (Fin n) (Fin n) K) i j from congrFun (congrFun hh i) j,
+        Matrix.one_apply_ne (ne_of_gt hij)]
+      exact Ideal.zero_mem _
+  exact fun f hf => Ideal.mem_bot.mp (hle hf)
+
+variable (K n)
+
+/-- **The Borel subgroup of the pair model of `GL_n`, as a closed subgroup**: the invertible
+upper triangular matrices, paired with their (upper triangular) inverses. -/
+noncomputable def borel : GroupPresentation K (GLIdx n) :=
+  (glPresentation K n).restrict glIdeal_le_borelIdeal borelIdeal_mul_mem borelIdeal_inv_mem
+    borelIdeal_one_mem
+
+variable {K n}
+
+@[simp] theorem borel_I : (borel K n).I = borelIdeal K n := rfl
+@[simp] theorem borel_mul : (borel K n).mul = glMul K n := rfl
+@[simp] theorem borel_inv : (borel K n).inv = glInv K n := rfl
+@[simp] theorem borel_one : (borel K n).one = glOne K n := rfl
+
+/-- **The `K`-points of the Borel subgroup** are the pairs `(g, h)` of mutually inverse
+matrices, both upper triangular. -/
+theorem mem_borel_pts_iff (x : GLIdx n → K) :
+    x ∈ (borel K n).pts ↔
+      gPt K n x * hPt K n x = 1 ∧ hPt K n x * gPt K n x = 1 ∧
+        (∀ i j : Fin n, j < i → gPt K n x i j = 0) ∧
+        (∀ i j : Fin n, j < i → hPt K n x i j = 0) := by
+  constructor
+  · intro hx
+    obtain ⟨h1, h2⟩ := (mem_glData_pts_iff x).mp fun f hf => hx f (glIdeal_le_borelIdeal hf)
+    refine ⟨h1, h2, fun i j hij => ?_, fun i j hij => ?_⟩
+    · have hk := hx _ (gVar_mem_borelIdeal hij)
+      rw [aeval_eq_pairAeval] at hk
+      simpa using hk
+    · have hk := hx _ (hVar_mem_borelIdeal hij)
+      rw [aeval_eq_pairAeval] at hk
+      simpa using hk
+  · rintro ⟨h1, h2, h3, h4⟩
+    have hle : borelIdeal K n ≤
+        Ideal.comap (aeval x : MvPolynomial (GLIdx n) K →ₐ[K] K) ⊥ := by
+      refine borelIdeal_le (fun i j => ?_) (fun i j => ?_) (fun i j hij => ?_) (fun i j hij => ?_)
+      · rw [Ideal.mem_comap, aeval_eq_pairAeval, map_rel, map_gVar, map_hVar, h1, sub_self]
+        exact Ideal.zero_mem _
+      · rw [Ideal.mem_comap, aeval_eq_pairAeval, map_rel, map_hVar, map_gVar, h2, sub_self]
+        exact Ideal.zero_mem _
+      · rw [Ideal.mem_comap, aeval_eq_pairAeval]
+        show pairAeval K n (gPt K n x) (hPt K n x) (gVar K n i j) ∈ (⊥ : Ideal K)
+        rw [show pairAeval K n (gPt K n x) (hPt K n x) (gVar K n i j) = gPt K n x i j by simp,
+          h3 i j hij]
+        exact Ideal.zero_mem _
+      · rw [Ideal.mem_comap, aeval_eq_pairAeval]
+        show pairAeval K n (gPt K n x) (hPt K n x) (hVar K n i j) ∈ (⊥ : Ideal K)
+        rw [show pairAeval K n (gPt K n x) (hPt K n x) (hVar K n i j) = hPt K n x i j by simp,
+          h4 i j hij]
+        exact Ideal.zero_mem _
+    exact fun f hf => Ideal.mem_bot.mp (hle hf)
+
+/-- Sanity check: the Borel is a group object over `Spec K`, of finite type. -/
+noncomputable example : GrpObj (borel K n).scheme := inferInstance
+
+example : LocallyOfFiniteType (borel K n).scheme.hom := inferInstance
+
+end GLPair
+/-! ### The affine group of the line
+
+`t ↦ (t − a) / b`, in the chart which adjoins the inverse scaling: coordinates `(a, b, s)`
+indexed by `Fin 2 ⊕ Unit` and the single relation `s b = 1`, so that the group is a *closed*
+subscheme of `𝔸³`.  The law is `(a, b, s) (a', b', s') = (a' + a b', b b', s s')`, the
+inverse is `(−a s, s, b)` and the unit is `(0, 1, 1)`.
+
+This is the group of the marked-pencil fibration of `Chain/Hyps` (the reparametrisations of
+a pencil).  The ideal is principal, so each descent condition is one computation on the
+relation, and each of the five Hopf axioms is a computation on the three generators, descended
+through the principal relation by `affIdeal_apply_eq_zero`. -/
+
+namespace AffLine
+
+variable (K : Type) [Field K]
+
+/-- The shift coordinate `a`. -/
+noncomputable def aVar : MvPolynomial (Fin 2 ⊕ Unit) K := X (Sum.inl 0)
+
+/-- The scaling coordinate `b`. -/
+noncomputable def bVar : MvPolynomial (Fin 2 ⊕ Unit) K := X (Sum.inl 1)
+
+/-- The inverse-scaling coordinate `s`. -/
+noncomputable def sVar : MvPolynomial (Fin 2 ⊕ Unit) K := X (Sum.inr ())
+
+/-- The chart relation `s b − 1`. -/
+noncomputable def affRel : MvPolynomial (Fin 2 ⊕ Unit) K := sVar K * bVar K - 1
+
+/-- The ideal of the affine group of the line: the chart relation. -/
+noncomputable def affIdeal : Ideal (MvPolynomial (Fin 2 ⊕ Unit) K) := Ideal.span {affRel K}
+
+theorem affRel_mem : affRel K ∈ affIdeal K := Ideal.subset_span rfl
+
+variable {K}
+
+/-- A map killing the chart relation kills the whole ideal. -/
+theorem affIdeal_apply_eq_zero {R : Type} [CommRing R] [Algebra K R]
+    (φ : MvPolynomial (Fin 2 ⊕ Unit) K →ₐ[K] R) (h : φ (affRel K) = 0)
+    {f : MvPolynomial (Fin 2 ⊕ Unit) K} (hf : f ∈ affIdeal K) : φ f = 0 :=
+  RingHom.mem_ker.1
+    (Ideal.span_le.2 (Set.singleton_subset_iff.2 (RingHom.mem_ker.2 h)) hf)
+
+variable (K)
+
+/-- The group law `(a, b, s) (a', b', s') = (a' + a b', b b', s s')`. -/
+noncomputable def affMulPoly :
+    (Fin 2 ⊕ Unit) → MvPolynomial ((Fin 2 ⊕ Unit) ⊕ (Fin 2 ⊕ Unit)) K :=
+  Sum.elim
+    ![X (Sum.inr (Sum.inl 0)) + X (Sum.inl (Sum.inl 0)) * X (Sum.inr (Sum.inl 1)),
+      X (Sum.inl (Sum.inl 1)) * X (Sum.inr (Sum.inl 1))]
+    (fun _ => X (Sum.inl (Sum.inr ())) * X (Sum.inr (Sum.inr ())))
+
+/-- The inverse `(a, b, s)⁻¹ = (−a s, s, b)`. -/
+noncomputable def affInvPoly : (Fin 2 ⊕ Unit) → MvPolynomial (Fin 2 ⊕ Unit) K :=
+  Sum.elim ![-(aVar K * sVar K), sVar K] (fun _ => bVar K)
+
+/-- The unit `(0, 1, 1)`. -/
+def affOnePt : (Fin 2 ⊕ Unit) → K := Sum.elim ![0, 1] (fun _ => 1)
+
+@[simp] theorem affMulPoly_shift : affMulPoly K (Sum.inl 0)
+    = X (Sum.inr (Sum.inl 0)) + X (Sum.inl (Sum.inl 0)) * X (Sum.inr (Sum.inl 1)) := rfl
+
+@[simp] theorem affMulPoly_scale : affMulPoly K (Sum.inl 1)
+    = X (Sum.inl (Sum.inl 1)) * X (Sum.inr (Sum.inl 1)) := rfl
+
+@[simp] theorem affMulPoly_inv : affMulPoly K (Sum.inr ())
+    = X (Sum.inl (Sum.inr ())) * X (Sum.inr (Sum.inr ())) := rfl
+
+@[simp] theorem affInvPoly_shift : affInvPoly K (Sum.inl 0) = -(aVar K * sVar K) := rfl
+
+@[simp] theorem affInvPoly_scale : affInvPoly K (Sum.inl 1) = sVar K := rfl
+
+@[simp] theorem affInvPoly_inv : affInvPoly K (Sum.inr ()) = bVar K := rfl
+
+@[simp] theorem affOnePt_shift : affOnePt K (Sum.inl 0) = 0 := rfl
+
+@[simp] theorem affOnePt_scale : affOnePt K (Sum.inl 1) = 1 := rfl
+
+@[simp] theorem affOnePt_inv : affOnePt K (Sum.inr ()) = 1 := rfl
+
+/-- **The group data of the affine group of the line.** -/
+noncomputable def affData : GroupData K (Fin 2 ⊕ Unit) where
+  I := affIdeal K
+  mul := affMulPoly K
+  inv := affInvPoly K
+  one := affOnePt K
+  mul_mem := by
+    intro f hf
+    refine affIdeal_apply_eq_zero
+      ((Algebra.TensorProduct.map (Ideal.Quotient.mkₐ K (affIdeal K))
+          (Ideal.Quotient.mkₐ K (affIdeal K))).comp
+        ((tensorOfSum K (Fin 2 ⊕ Unit)).comp (aeval (affMulPoly K)))) ?_ hf
+    show Algebra.TensorProduct.map (Ideal.Quotient.mkₐ K (affIdeal K))
+        (Ideal.Quotient.mkₐ K (affIdeal K))
+        (tensorOfSum K (Fin 2 ⊕ Unit) (aeval (affMulPoly K) (affRel K))) = 0
+    have hts : tensorOfSum K (Fin 2 ⊕ Unit) (aeval (affMulPoly K) (affRel K))
+        = (sVar K * bVar K) ⊗ₜ[K] (sVar K * bVar K) - 1 := by
+      rw [affRel]
+      simp only [map_sub, map_mul, map_one, aeval_X, affMulPoly_scale, affMulPoly_inv,
+        sVar, bVar, tensorOfSum, Sum.elim_inl, Sum.elim_inr]
+      rw [Algebra.TensorProduct.tmul_mul_tmul, Algebra.TensorProduct.tmul_mul_tmul,
+        Algebra.TensorProduct.tmul_mul_tmul]
+      ring_nf
+    rw [hts, map_sub, map_one, Algebra.TensorProduct.map_tmul]
+    have hmk : Ideal.Quotient.mkₐ K (affIdeal K) (sVar K * bVar K) = 1 := by
+      have h0 : Ideal.Quotient.mkₐ K (affIdeal K) (affRel K) = 0 :=
+        Ideal.Quotient.eq_zero_iff_mem.2 (affRel_mem K)
+      rw [affRel, map_sub, map_one, sub_eq_zero] at h0
+      exact h0
+    rw [hmk, ← Algebra.TensorProduct.one_def, sub_self]
+  inv_mem := by
+    intro f hf
+    refine affIdeal_apply_eq_zero
+      ((Ideal.Quotient.mkₐ K (affIdeal K)).comp (aeval (affInvPoly K))) ?_ hf
+    show Ideal.Quotient.mk (affIdeal K) (aeval (affInvPoly K) (affRel K)) = 0
+    have he : aeval (affInvPoly K) (affRel K) = affRel K := by
+      rw [affRel]
+      simp only [map_sub, map_mul, map_one, aeval_X, affInvPoly_scale, affInvPoly_inv,
+        sVar, bVar]
+      ring
+    rw [he]
+    exact Ideal.Quotient.eq_zero_iff_mem.2 (affRel_mem K)
+  one_mem := by
+    intro f hf
+    refine affIdeal_apply_eq_zero (aeval (affOnePt K)) ?_ hf
+    rw [affRel]
+    simp [sVar, bVar]
+
+theorem affData_I : (affData K).I = affIdeal K := rfl
+
+@[simp] theorem affData_mul : (affData K).mul = affMulPoly K := rfl
+
+@[simp] theorem affData_inv : (affData K).inv = affInvPoly K := rfl
+
+@[simp] theorem affData_one : (affData K).one = affOnePt K := rfl
+
+/-! ### The Hopf axioms, from the group laws
+
+Associativity of `(a, b, s) (a', b', s') = (a' + a b', b b', s s')` and the two unit laws
+hold on the nose; the two inverse laws hold modulo the chart relation `s b − 1`, with
+`x⁻¹ x − 1` a multiple of it in each coordinate.  These five polynomial identities are the
+hypotheses of `GroupPresentation.ofLaws`, which turns them into the five Hopf axioms. -/
+
+variable {K}
+
+/-- The three coordinates, as a case split. -/
+private theorem affCases {p : (Fin 2 ⊕ Unit) → Prop} (h0 : p (Sum.inl 0)) (h1 : p (Sum.inl 1))
+    (hs : p (Sum.inr ())) : ∀ i, p i := by
+  rintro (i | ⟨⟩)
+  · fin_cases i
+    · exact h0
+    · exact h1
+  · exact hs
+
+/-- A multiple of the chart relation lies in the ideal. -/
+private theorem sub_mem_affIdeal {f g c : MvPolynomial (Fin 2 ⊕ Unit) K}
+    (h : f - g = c * affRel K) : f - g ∈ affIdeal K := by
+  rw [h]
+  exact Ideal.mul_mem_left _ _ (affRel_mem K)
+
+variable (K)
+
+attribute [local simp] GroupData.mulAssocL GroupData.mulAssocR GroupData.mul12 GroupData.mul23
+  GroupData.oneMul GroupData.mulOne GroupData.invMul GroupData.mulInv affMulPoly affInvPoly
+  affOnePt affRel aVar bVar sVar
+
+/-- **The affine group of the line, as a `GroupPresentation`.**  The five Hopf axioms are
+the five group laws as polynomial identities (`GroupPresentation.ofLaws`). -/
+noncomputable def affLine : GroupPresentation K (Fin 2 ⊕ Unit) :=
+  GroupPresentation.ofLaws (affData K)
+    (affCases (sub_mem_of_eq (by simp; ring)) (sub_mem_of_eq (by simp; ring))
+      (sub_mem_of_eq (by simp; ring)))
+    (affCases (sub_mem_of_eq (by simp)) (sub_mem_of_eq (by simp)) (sub_mem_of_eq (by simp)))
+    (affCases (sub_mem_of_eq (by simp)) (sub_mem_of_eq (by simp)) (sub_mem_of_eq (by simp)))
+    (affCases (sub_mem_affIdeal (c := -(aVar K)) (by simp; ring))
+      (sub_mem_affIdeal (c := 1) (by simp)) (sub_mem_affIdeal (c := 1) (by simp; ring)))
+    (affCases (sub_mem_affIdeal (c := 0) (by simp))
+      (sub_mem_affIdeal (c := 1) (by simp; ring)) (sub_mem_affIdeal (c := 1) (by simp)))
+
+@[simp] theorem affLine_toGroupData : (affLine K).toGroupData = affData K := rfl
+
+/-- **The `K`-points of the affine group of the line**: the triples `(a, b, s)` with
+`s b = 1`. -/
+theorem mem_affLine_pts_iff (g : (Fin 2 ⊕ Unit) → K) :
+    g ∈ (affLine K).pts ↔ g (Sum.inr ()) * g (Sum.inl 1) = 1 := by
+  constructor
+  · intro hg
+    have h := hg (affRel K) (affRel_mem K)
+    rw [affRel, map_sub, map_mul, map_one, sub_eq_zero] at h
+    simpa [sVar, bVar] using h
+  · intro hg f hf
+    refine affIdeal_apply_eq_zero (aeval g) ?_ hf
+    rw [affRel]
+    simp only [map_sub, map_mul, map_one, aeval_X, sVar, bVar]
+    rw [hg, sub_self]
+
+/-- Sanity check: the affine group of the line is a group object over `Spec K`, of finite
+type. -/
+noncomputable example : GrpObj (affLine K).scheme := inferInstance
+
+example : LocallyOfFiniteType (affLine K).scheme.hom := inferInstance
+
+end AffLine
+
+
+end Height.Geometry

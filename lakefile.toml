@@ -1,0 +1,25 @@
+name = "isotropy"
+version = "0.1.0"
+defaultTargets = ["Isotropy", "Height", "QSteenrod"]
+
+# Toolchain: leanprover/lean4:v4.34.0-rc2 (see lean-toolchain), managed by
+# elan.  mathlib is pinned to master as of 2026-09-03 plus the Cohen–Macaulay
+# PR stack (branch cm-stack on the fork); oleans for the upstream files come
+# from mathlib's own cache:
+#     lake exe cache get && lake build
+[[require]]
+name = "mathlib"
+git = "https://github.com/Shamrock-Frost/mathlib4"
+rev = "76e9e72564e982c2424e0d218a34f96bfc712bbc"
+
+[[lean_lib]]
+name = "Isotropy"
+leanOptions = [{name = "autoImplicit", value = false}]
+
+[[lean_lib]]
+name = "Height"
+leanOptions = [{name = "autoImplicit", value = false}]
+
+[[lean_lib]]
+name = "QSteenrod"
+leanOptions = [{name = "autoImplicit", value = false}]
