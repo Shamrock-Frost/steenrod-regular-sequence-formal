@@ -1,6 +1,9 @@
 name = "isotropy"
 version = "0.1.0"
 defaultTargets = ["Isotropy", "Height", "QSteenrod"]
+license = "MIT"
+description = "Lean 4 proof that the Steenrod powers of the characteristic polynomial's coefficients form a regular sequence"
+keywords = ["math", "algebraic-topology", "steenrod-algebra", "commutative-algebra"]
 
 # Toolchain: leanprover/lean4:v4.34.0-rc2 (see lean-toolchain), managed by
 # elan.  mathlib is pinned to master as of 2026-09-03 plus the Cohen–Macaulay
